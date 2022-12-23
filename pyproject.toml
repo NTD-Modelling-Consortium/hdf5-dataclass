@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "hdf5-serialiser"
+version = "0.1.0"
+description = ""
+authors = ["Marcin Krupowicz <ma@rcin.me>"]
+readme = "README.md"
+packages = [{include = "hdf5_serialiser"}]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4"
+h5py = "^3.7.0"
+numpy = "^1.24.0"
+
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.19.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
