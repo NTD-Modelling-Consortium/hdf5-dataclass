@@ -2,12 +2,13 @@ __all__ = ["serialisable"]
 
 import dataclasses
 
-# from pydantic import BaseModel
 from pathlib import Path
 from typing import IO, Any, Type, TypeVar
 import typing
 import types
+import inspect
 
+import pydantic
 import numpy as np
 import h5py
 
@@ -15,8 +16,7 @@ FileType = str | Path | IO[bytes]
 
 
 # TODO:
-# * pydantic -- I think just adapt _fields & _is_class_serialisable for pydantic models
-# * list (list of primitives only?)
+# * list/tuples (list of primitives only?)
 
 
 class AbstractSerialisable:
@@ -66,7 +66,6 @@ def _is_numpy_array(T: type) -> bool:
 
 
 def _is_class_serialisable(T: type) -> bool:
-    # TODO: or a serialisable pydantic model
     return dataclasses.is_dataclass(T) and issubclass(T, AbstractSerialisable)
 
 
@@ -77,6 +76,14 @@ def _is_supported_dict(T: type) -> bool:
     return _is_primitive(K) and _is_type_supported(V)
 
 
+def _is_pydantic_model(T: type) -> bool:
+    # Annying error without try...catch: "issubclass() arg 1 must be a class"
+    try:
+        return issubclass(T, pydantic.BaseModel)
+    except TypeError:
+        return False
+
+
 def _is_type_supported(T: type) -> bool:
     return (
         _is_primitive(T)
@@ -84,11 +91,12 @@ def _is_type_supported(T: type) -> bool:
         or _is_numpy_array(T)
         or _is_class_serialisable(T)
         or _is_supported_dict(T)
+        or _is_pydantic_model(T)
     )
 
 
 def _fields(T: type) -> dict[str, type]:
-    # TODO: two separate implementations - one for dataclass, one for pydantic model
+    assert dataclasses.is_dataclass(T)
     ret: dict[str, type] = {}
     for field in dataclasses.fields(T):
         ret[field.name] = field.type
@@ -104,12 +112,11 @@ def _serialise(
         if val is None:
             return
 
-        if _is_primitive(T):
-            assert val is not None
+        if _is_primitive(T) or _is_optional_primitive(T):
             h5.attrs[attr] = val
-        elif _is_optional_primitive(T) and val is not None:
-            h5.attrs[attr] = val
-        # TODO: elif dict/list -- json? check size?
+        elif _is_pydantic_model(T):
+            h5.attrs[attr] = val.json()
+        # TODO: elif list - json?
         elif _is_numpy_array(T):
             h5.create_dataset(attr, data=val)
         elif _is_class_serialisable(T):
@@ -151,6 +158,8 @@ def _deserialise(
             ), f"Attribute '{attr}' marked as non-optional, but value is not present!"
         elif _is_optional_primitive(T):
             val = h5.attrs.get(attr)
+        elif _is_pydantic_model(T):
+            val = T.parse_raw(h5.attrs.get(attr))
         else:
             serialised = h5[attr]
             if isinstance(serialised, h5py.Dataset):
