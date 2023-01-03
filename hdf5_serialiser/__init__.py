@@ -1,14 +1,12 @@
 __all__ = ["serialisable"]
 
-import dataclasses
+from dataclasses import is_dataclass, fields
 
 from pathlib import Path
-from typing import IO, Any, Type, TypeVar
-import typing
+from typing import IO, Any, Type, TypeVar, Union, get_args, get_origin
 import types
-import inspect
 
-import pydantic
+from pydantic import BaseModel
 import numpy as np
 import h5py
 
@@ -38,13 +36,13 @@ def _is_primitive(obj_or_class: Any) -> bool:
 
 def _is_union(T: type) -> bool:
     # One is for A | B, another is for Union[A, B]. Shrug.
-    return typing.get_origin(T) in (types.UnionType, typing.Union)
+    return get_origin(T) in (types.UnionType, Union)
 
 
 def _is_optional(T: type) -> bool:
     if not _is_union(T):
         return False
-    args = typing.get_args(T)
+    args = get_args(T)
     if len(args) != 2:
         return False
     T1, T2 = args
@@ -53,7 +51,7 @@ def _is_optional(T: type) -> bool:
 
 def _extract_type_from_optional(T: type) -> type:
     assert _is_optional(T)
-    T1, T2 = typing.get_args(T)
+    T1, T2 = get_args(T)
     return T1 if T2 == types.NoneType else T2
 
 
@@ -62,24 +60,24 @@ def _is_optional_primitive(T: type) -> bool:
 
 
 def _is_numpy_array(T: type) -> bool:
-    return typing.get_origin(T) == np.ndarray
+    return get_origin(T) == np.ndarray
 
 
 def _is_class_serialisable(T: type) -> bool:
-    return dataclasses.is_dataclass(T) and issubclass(T, AbstractSerialisable)
+    return is_dataclass(T) and issubclass(T, AbstractSerialisable)
 
 
 def _is_supported_dict(T: type) -> bool:
-    if not typing.get_origin(T) == dict:
+    if not get_origin(T) == dict:
         return False
-    K, V = typing.get_args(T)
+    K, V = get_args(T)
     return _is_primitive(K) and _is_type_supported(V)
 
 
 def _is_pydantic_model(T: type) -> bool:
-    # Annying error without try...catch: "issubclass() arg 1 must be a class"
+    # Annoying error without try...catch: "issubclass() arg 1 must be a class"
     try:
-        return issubclass(T, pydantic.BaseModel)
+        return issubclass(T, BaseModel)
     except TypeError:
         return False
 
@@ -96,9 +94,9 @@ def _is_type_supported(T: type) -> bool:
 
 
 def _fields(T: type) -> dict[str, type]:
-    assert dataclasses.is_dataclass(T)
+    assert is_dataclass(T)
     ret: dict[str, type] = {}
-    for field in dataclasses.fields(T):
+    for field in fields(T):
         ret[field.name] = field.type
     return ret
 
@@ -115,6 +113,7 @@ def _serialise(
         if _is_primitive(T) or _is_optional_primitive(T):
             h5.attrs[attr] = val
         elif _is_pydantic_model(T):
+            
             h5.attrs[attr] = val.json()
         # TODO: elif list - json?
         elif _is_numpy_array(T):
@@ -123,7 +122,7 @@ def _serialise(
             grp = h5.create_group(attr)
             val.serialise(output=grp)
         elif _is_supported_dict(T):
-            _, V = typing.get_args(T)
+            _, V = get_args(T)
             grp = h5.create_group(attr)
             for k, v in val.items():
                 serialise_single(k, v, V, grp)
@@ -159,6 +158,7 @@ def _deserialise(
         elif _is_optional_primitive(T):
             val = h5.attrs.get(attr)
         elif _is_pydantic_model(T):
+            assert issubclass(T, BaseModel)
             val = T.parse_raw(h5.attrs.get(attr))
         else:
             serialised = h5[attr]
@@ -166,11 +166,11 @@ def _deserialise(
                 val = np.array(serialised)
             elif isinstance(serialised, h5py.Group):
                 assert _is_class_serialisable(T) or _is_supported_dict(T)
-                if _is_class_serialisable(T):
+                if is_dataclass(T) and issubclass(T, AbstractSerialisable): # _is_class_serialisable
                     val = T.deserialise(serialised)
                 else:
                     # dict case
-                    _, V = typing.get_args(T)
+                    _, V = get_args(T)
                     val = {}
                     keys = (
                         serialised.attrs.keys()
