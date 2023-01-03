@@ -1,9 +1,9 @@
 __all__ = ["serialisable"]
 
-from dataclasses import is_dataclass, fields, dataclass
+from dataclasses import is_dataclass, fields
 
 from pathlib import Path
-from typing import IO, Any, Generic, Type, TypeVar, Union, get_args, get_origin
+from typing import IO, Any, Type, Union, get_args, get_origin
 import types
 
 from pydantic import BaseModel
