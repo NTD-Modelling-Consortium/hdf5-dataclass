@@ -3,7 +3,7 @@ __all__ = ["serialisable"]
 from dataclasses import is_dataclass, fields
 
 from pathlib import Path
-from typing import IO, Any, Type, Union, get_args, get_origin
+from typing import IO, Any, Protocol, Type, Union, get_args, get_origin, runtime_checkable
 import types
 
 from pydantic import BaseModel
@@ -16,7 +16,8 @@ FileType = str | Path | IO[bytes]
 # TODO:
 # * list/tuples (list of primitives only?)
 
-class AbstractSerialisable:
+@runtime_checkable
+class AbstractSerialisable(Protocol):
     def serialise(self, output: FileType | h5py.File | h5py.Group) -> None:
         raise NotImplementedError()
 
