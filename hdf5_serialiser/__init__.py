@@ -152,8 +152,7 @@ def serialisable(input_class: Type[object]) -> Type[AbstractSerialisable]:
         @classmethod
         def deserialise(
             cls,
-            input: FileType | h5py.File | h5py.Group,
-            serialisable_attrs: dict[str, type],
+            input: FileType | h5py.File | h5py.Group
         ):
             def deserialise_single(attr: str, T: type, h5: h5py.File | h5py.Group) -> Any:
                 val = None
