@@ -1,15 +1,16 @@
-__all__ = ["serialisable"]
+__all__ = ["SerialisedDataclass"]
 
-from dataclasses import is_dataclass, fields
+from dataclasses import dataclass, is_dataclass, fields
 
 from pathlib import Path
 from typing import IO, Any, Protocol, Type, Union, get_args, get_origin, runtime_checkable
 import types
+from typing_extensions import dataclass_transform
 
 from pydantic import BaseModel
 import numpy as np
 import h5py
-
+import abc
 FileType = str | Path | IO[bytes]
 
 
@@ -101,98 +102,102 @@ def _fields(T: type) -> dict[str, type]:
     return ret
 
 
-def serialisable(input_class: Type[object]) -> Type[AbstractSerialisable]:
-    serialisable_attrs = _fields(input_class)
-    unsupported_attrs = [
-        attr for attr, T in serialisable_attrs.items() if not _is_type_supported(T)
-    ]
-    assert (
-        not unsupported_attrs
-    ), f"Types of attributes {', '.join(unsupported_attrs)} are not supported!"
+@dataclass_transform()
+class SerialisedDataclass:
+    serialisable_attrs: dict[str, type]
+    def __init_subclass__(cls, **kwargs):
+        serialisable_attrs = _fields(dataclass(cls))
+        unsupported_attrs = [
+            attr for attr, T in serialisable_attrs.items() if not _is_type_supported(T)
+        ]
+        assert (
+            not unsupported_attrs
+        ), f"Types of attributes {', '.join(unsupported_attrs)} are not supported!"
 
-    class Serialised(AbstractSerialisable, input_class):
-        def serialise(
-            self, output: FileType | h5py.File | h5py.Group
-        ):
-            def serialise_single(
-                attr: str, val: Any, T: type, h5: h5py.File | h5py.Group
-            ) -> None:
-                if val is None:
-                    return
+        cls.serialisable_attrs = serialisable_attrs
+        return dataclass(cls)
 
-                if _is_primitive(T) or _is_optional_primitive(T):
-                    h5.attrs[attr] = val
-                elif _is_pydantic_model(T):
-                    
-                    h5.attrs[attr] = val.json()
-                # TODO: elif list - json?
-                elif _is_numpy_array(T):
-                    h5.create_dataset(attr, data=val)
-                elif _is_class_serialisable(T):
-                    grp = h5.create_group(attr)
-                    val.serialise(output=grp)
-                elif _is_supported_dict(T):
-                    _, V = get_args(T)
-                    grp = h5.create_group(attr)
-                    for k, v in val.items():
-                        serialise_single(k, v, V, grp)
-                else:
-                    raise Exception(f"Unsupported type of attribute '{attr}'")
+    def serialise(
+        self, output: FileType | h5py.File | h5py.Group
+    ):
+        def serialise_single(
+            attr: str, val: Any, T: type, h5: h5py.File | h5py.Group
+        ) -> None:
+            if val is None:
+                return
 
-            h5 = (
-                output
-                if isinstance(output, (h5py.File, h5py.Group))
-                else h5py.File(output, "w")
-            )
+            if _is_primitive(T) or _is_optional_primitive(T):
+                h5.attrs[attr] = val
+            elif _is_pydantic_model(T):
+                
+                h5.attrs[attr] = val.json()
+            # TODO: elif list - json?
+            elif _is_numpy_array(T):
+                h5.create_dataset(attr, data=val)
+            elif _is_class_serialisable(T):
+                grp = h5.create_group(attr)
+                val.serialise(output=grp)
+            elif _is_supported_dict(T):
+                _, V = get_args(T)
+                grp = h5.create_group(attr)
+                for k, v in val.items():
+                    serialise_single(k, v, V, grp)
+            else:
+                raise Exception(f"Unsupported type of attribute '{attr}'")
 
-            for attr, T in serialisable_attrs.items():
-                val = getattr(self, attr)
-                serialise_single(attr, val, T, h5)
+        h5 = (
+            output
+            if isinstance(output, (h5py.File, h5py.Group))
+            else h5py.File(output, "w")
+        )
 
-        @classmethod
-        def deserialise(
-            cls,
-            input: FileType | h5py.File | h5py.Group
-        ):
-            def deserialise_single(attr: str, T: type, h5: h5py.File | h5py.Group) -> Any:
-                val = None
-                if _is_primitive(T):
-                    val = h5.attrs.get(attr)
-                    assert (
-                        val is not None
-                    ), f"Attribute '{attr}' marked as non-optional, but value is not present!"
-                elif _is_optional_primitive(T):
-                    val = h5.attrs.get(attr)
-                elif _is_pydantic_model(T):
-                    assert issubclass(T, BaseModel)
-                    val = T.parse_raw(h5.attrs.get(attr))
-                else:
-                    serialised = h5[attr]
-                    if isinstance(serialised, h5py.Dataset):
-                        val = np.array(serialised)
-                    elif isinstance(serialised, h5py.Group):
-                        assert _is_class_serialisable(T) or _is_supported_dict(T)
-                        if is_dataclass(T) and issubclass(T, AbstractSerialisable): # _is_class_serialisable
-                            val = T.deserialise(serialised)
-                        else:
-                            # dict case
-                            _, V = get_args(T)
-                            val = {}
-                            keys = (
-                                serialised.attrs.keys()
-                                if _is_primitive(V) or _is_optional_primitive(V)
-                                else serialised.keys()
-                            )
-                            for key in keys:
-                                val[key] = deserialise_single(key, V, serialised)
+        for attr, T in self.serialisable_attrs.items():
+            val = getattr(self, attr)
+            serialise_single(attr, val, T, h5)
+
+    @classmethod
+    def deserialise(
+        cls,
+        input: FileType | h5py.File | h5py.Group
+    ):
+        def deserialise_single(attr: str, T: type, h5: h5py.File | h5py.Group) -> Any:
+            val = None
+            if _is_primitive(T):
+                val = h5.attrs.get(attr)
+                assert (
+                    val is not None
+                ), f"Attribute '{attr}' marked as non-optional, but value is not present!"
+            elif _is_optional_primitive(T):
+                val = h5.attrs.get(attr)
+            elif _is_pydantic_model(T):
+                assert issubclass(T, BaseModel)
+                val = T.parse_raw(h5.attrs.get(attr))
+            else:
+                serialised = h5[attr]
+                if isinstance(serialised, h5py.Dataset):
+                    val = np.array(serialised)
+                elif isinstance(serialised, h5py.Group):
+                    assert _is_class_serialisable(T) or _is_supported_dict(T)
+                    if is_dataclass(T) and issubclass(T, AbstractSerialisable): # _is_class_serialisable
+                        val = T.deserialise(serialised)
                     else:
-                        raise Exception("Unknown type of data in hdf5")
-                return val
+                        # dict case
+                        _, V = get_args(T)
+                        val = {}
+                        keys = (
+                            serialised.attrs.keys()
+                            if _is_primitive(V) or _is_optional_primitive(V)
+                            else serialised.keys()
+                        )
+                        for key in keys:
+                            val[key] = deserialise_single(key, V, serialised)
+                else:
+                    raise Exception("Unknown type of data in hdf5")
+            return val
 
-            h5 = input if isinstance(input, (h5py.File, h5py.Group)) else h5py.File(input, "r")
+        h5 = input if isinstance(input, (h5py.File, h5py.Group)) else h5py.File(input, "r")
 
-            attrs = {}
-            for attr, T in serialisable_attrs.items():
-                attrs[attr] = deserialise_single(attr, T, h5)
-            return cls(**attrs)
-    return Serialised
+        attrs = {}
+        for attr, T in cls.serialisable_attrs.items():
+            attrs[attr] = deserialise_single(attr, T, h5)
+        return cls(**attrs)
