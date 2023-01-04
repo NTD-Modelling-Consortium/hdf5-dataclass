@@ -3,14 +3,14 @@ __all__ = ["SerialisedDataclass"]
 from dataclasses import dataclass, is_dataclass, fields
 
 from pathlib import Path
-from typing import IO, Any, Protocol, Type, Union, get_args, get_origin, runtime_checkable
+from typing import IO, Any, Protocol, Union, get_args, get_origin, runtime_checkable
 import types
 from typing_extensions import dataclass_transform
 
 from pydantic import BaseModel
 import numpy as np
 import h5py
-import abc
+
 FileType = str | Path | IO[bytes]
 
 
