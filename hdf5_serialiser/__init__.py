@@ -3,7 +3,7 @@ __all__ = ["SerialisedDataclass"]
 from dataclasses import dataclass, is_dataclass, fields
 
 from pathlib import Path
-from typing import IO, Any, Protocol, Union, get_args, get_origin, runtime_checkable
+from typing import IO, Any, Union, get_args, get_origin
 import types
 from typing_extensions import dataclass_transform
 
@@ -12,20 +12,6 @@ import numpy as np
 import h5py
 
 FileType = str | Path | IO[bytes]
-
-
-# TODO:
-# * list/tuples (list of primitives only?)
-
-@runtime_checkable
-class AbstractSerialisable(Protocol):
-    def serialise(self, output: FileType | h5py.File | h5py.Group) -> None:
-        raise NotImplementedError()
-
-    @classmethod
-    def deserialise(cls, input: FileType | h5py.File | h5py.Group):
-        raise NotImplementedError()
-
 
 def _is_primitive(obj_or_class: Any) -> bool:
     primitives = (int, float, str)
@@ -65,7 +51,7 @@ def _is_numpy_array(T: type) -> bool:
 
 
 def _is_class_serialisable(T: type) -> bool:
-    return is_dataclass(T) and issubclass(T, AbstractSerialisable)
+    return is_dataclass(T) and issubclass(T, SerialisedDataclass)
 
 
 def _is_supported_dict(T: type) -> bool:
@@ -178,7 +164,7 @@ class SerialisedDataclass:
                     val = np.array(serialised)
                 elif isinstance(serialised, h5py.Group):
                     assert _is_class_serialisable(T) or _is_supported_dict(T)
-                    if is_dataclass(T) and issubclass(T, AbstractSerialisable): # _is_class_serialisable
+                    if is_dataclass(T) and issubclass(T, SerialisedDataclass): # _is_class_serialisable
                         val = T.deserialise(serialised)
                     else:
                         # dict case
