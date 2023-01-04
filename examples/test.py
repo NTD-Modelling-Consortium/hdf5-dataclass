@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from pydantic import BaseModel
 from io import BytesIO
 
@@ -32,7 +31,6 @@ class Big(SerialisedDataclass):
     d: DataClass
     p: Pyd
 
-help(Small)
 s = Small(x=None, y="three")
 d = DataClass(data=np.random.rand(2, 3))
 b = Big(a={"k1": {"k11": 123}, "k2": {"k21": 456}}, s=s, d=d, p=Pyd(z=123))
