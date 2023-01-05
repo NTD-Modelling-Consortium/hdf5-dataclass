@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "hdf5-serialiser"
+name = "hdf5-dataclass"
 version = "0.1.0"
 description = ""
 authors = ["Marcin Krupowicz <ma@rcin.me>"]
 readme = "README.md"
-packages = [{include = "hdf5_serialiser"}]
+packages = [{include = "hdf5_dataclass"}]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4"
