@@ -1,9 +1,9 @@
-__all__ = ["SerialisedDataclass"]
+__all__ = ["HDF5Dataclass"]
 
 from dataclasses import dataclass, is_dataclass, fields
 
 from pathlib import Path
-from typing import IO, Any, Union, get_args, get_origin
+from typing import IO, Any, Union, get_args, get_origin, TypeGuard, Type
 import types
 from typing_extensions import dataclass_transform
 
@@ -12,6 +12,7 @@ import numpy as np
 import h5py
 
 FileType = str | Path | IO[bytes]
+
 
 def _is_primitive(obj_or_class: Any) -> bool:
     primitives = (int, float, str)
@@ -50,8 +51,8 @@ def _is_numpy_array(T: type) -> bool:
     return get_origin(T) == np.ndarray
 
 
-def _is_class_serialisable(T: type) -> bool:
-    return is_dataclass(T) and issubclass(T, SerialisedDataclass)
+def _is_class_serialisable(T: type) -> TypeGuard[Type["HDF5Dataclass"]]:
+    return is_dataclass(T) and issubclass(T, HDF5Dataclass)
 
 
 def _is_supported_dict(T: type) -> bool:
@@ -61,7 +62,7 @@ def _is_supported_dict(T: type) -> bool:
     return _is_primitive(K) and _is_type_supported(V)
 
 
-def _is_pydantic_model(T: type) -> bool:
+def _is_pydantic_model(T: type) -> TypeGuard[Type[BaseModel]]:
     # Annoying error without try...catch: "issubclass() arg 1 must be a class"
     try:
         return issubclass(T, BaseModel)
@@ -89,10 +90,12 @@ def _fields(T: type) -> dict[str, type]:
 
 
 @dataclass_transform()
-class SerialisedDataclass:
+class HDF5Dataclass:
     serialisable_attrs: dict[str, type]
+
     def __init_subclass__(cls, **kwargs):
-        serialisable_attrs = _fields(dataclass(cls))
+        dataclass_cls = dataclass(cls, **kwargs)
+        serialisable_attrs = _fields(dataclass_cls)
         unsupported_attrs = [
             attr for attr, T in serialisable_attrs.items() if not _is_type_supported(T)
         ]
@@ -100,12 +103,10 @@ class SerialisedDataclass:
             not unsupported_attrs
         ), f"Types of attributes {', '.join(unsupported_attrs)} are not supported!"
 
-        cls.serialisable_attrs = serialisable_attrs
-        return dataclass(cls)
+        dataclass_cls.serialisable_attrs = serialisable_attrs
+        return dataclass_cls
 
-    def serialise(
-        self, output: FileType | h5py.File | h5py.Group
-    ):
+    def to_hdf5(self, output: FileType | h5py.File | h5py.Group):
         def serialise_single(
             attr: str, val: Any, T: type, h5: h5py.File | h5py.Group
         ) -> None:
@@ -115,14 +116,13 @@ class SerialisedDataclass:
             if _is_primitive(T) or _is_optional_primitive(T):
                 h5.attrs[attr] = val
             elif _is_pydantic_model(T):
-                
                 h5.attrs[attr] = val.json()
             # TODO: elif list - json?
             elif _is_numpy_array(T):
                 h5.create_dataset(attr, data=val)
             elif _is_class_serialisable(T):
                 grp = h5.create_group(attr)
-                val.serialise(output=grp)
+                val.to_hdf5(output=grp)
             elif _is_supported_dict(T):
                 _, V = get_args(T)
                 grp = h5.create_group(attr)
@@ -142,10 +142,7 @@ class SerialisedDataclass:
             serialise_single(attr, val, T, h5)
 
     @classmethod
-    def deserialise(
-        cls,
-        input: FileType | h5py.File | h5py.Group
-    ):
+    def from_hdf5(cls, input: FileType | h5py.File | h5py.Group):
         def deserialise_single(attr: str, T: type, h5: h5py.File | h5py.Group) -> Any:
             val = None
             if _is_primitive(T):
@@ -156,7 +153,6 @@ class SerialisedDataclass:
             elif _is_optional_primitive(T):
                 val = h5.attrs.get(attr)
             elif _is_pydantic_model(T):
-                assert issubclass(T, BaseModel)
                 val = T.parse_raw(h5.attrs.get(attr))
             else:
                 serialised = h5[attr]
@@ -164,8 +160,8 @@ class SerialisedDataclass:
                     val = np.array(serialised)
                 elif isinstance(serialised, h5py.Group):
                     assert _is_class_serialisable(T) or _is_supported_dict(T)
-                    if is_dataclass(T) and issubclass(T, SerialisedDataclass): # _is_class_serialisable
-                        val = T.deserialise(serialised)
+                    if _is_class_serialisable(T):
+                        val = T.from_hdf5(serialised)
                     else:
                         # dict case
                         _, V = get_args(T)
@@ -181,7 +177,11 @@ class SerialisedDataclass:
                     raise Exception("Unknown type of data in hdf5")
             return val
 
-        h5 = input if isinstance(input, (h5py.File, h5py.Group)) else h5py.File(input, "r")
+        h5 = (
+            input
+            if isinstance(input, (h5py.File, h5py.Group))
+            else h5py.File(input, "r")
+        )
 
         attrs = {}
         for attr, T in cls.serialisable_attrs.items():
