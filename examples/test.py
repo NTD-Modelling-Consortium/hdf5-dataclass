@@ -4,7 +4,7 @@ from io import BytesIO
 import numpy as np
 from numpy.typing import NDArray
 
-from hdf5_serialiser import HDF5Dataclass
+from hdf5_dataclass import HDF5Dataclass
 
 
 class Base(HDF5Dataclass):
@@ -39,3 +39,4 @@ buff = BytesIO()
 b.to_hdf5(buff)
 buff.seek(0)
 x: Big = Big.from_hdf5(buff)
+print(x)
