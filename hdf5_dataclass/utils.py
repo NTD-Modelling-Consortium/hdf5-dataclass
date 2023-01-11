@@ -10,7 +10,9 @@ def fields(T: type) -> dict[str, type]:
     assert dataclasses.is_dataclass(T)
     ret: dict[str, type] = {}
     for field in dataclasses.fields(T):
-        ret[field.name] = field.type
+        # Only serialise init fields
+        if field.init:
+            ret[field.name] = field.type
     return ret
 
 
