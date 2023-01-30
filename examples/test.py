@@ -26,7 +26,7 @@ class Small(HDF5Dataclass):
 
 class Big(HDF5Dataclass):
     a: dict[str, dict[str, int]]
-    s: Small
+    s: Small | None
     d: DataClass
     p: Pyd
 
