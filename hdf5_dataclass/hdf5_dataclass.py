@@ -91,18 +91,21 @@ class HDF5Dataclass:
             if val is None:
                 return
 
-            if utils.is_primitive(T) or utils.is_optional_primitive(T):
+            T_non_opt = (
+                utils.extract_type_from_optional(T) if utils.is_optional(T) else T
+            )
+            if utils.is_primitive(T_non_opt):
                 h5.attrs[attr] = val
-            elif utils.is_pydantic_model(T):
+            elif utils.is_pydantic_model(T_non_opt):
                 h5.attrs[attr] = val.json()
             # TODO: elif list - json?
-            elif utils.is_numpy_array(T):
+            elif utils.is_numpy_array(T_non_opt):
                 h5.create_dataset(attr, data=val)
-            elif is_hdf5_dataclass(T):
+            elif is_hdf5_dataclass(T_non_opt):
                 grp = h5.create_group(attr)
                 val.to_hdf5(output=grp)
-            elif _is_supported_dict(T):
-                _, V = get_args(T)
+            elif _is_supported_dict(T_non_opt):
+                _, V = get_args(T_non_opt)
                 grp = h5.create_group(attr)
                 for k, v in val.items():
                     serialise_single(k, v, V, grp)
@@ -129,26 +132,42 @@ class HDF5Dataclass:
 
         def deserialise_single(attr: str, T: type, h5: h5py.File | h5py.Group) -> Any:
             val = None
-            if utils.is_primitive(T):
-                val = h5.attrs.get(attr)
+
+            T_non_opt = (
+                utils.extract_type_from_optional(T) if utils.is_optional(T) else T
+            )
+
+            # Validate that non-optional fields require attr/data
+            if not utils.is_optional(T):
+                if utils.is_primitive(T_non_opt) or utils.is_pydantic_model(T_non_opt):
+                    keys_to_assert = h5.attrs
+                else:
+                    keys_to_assert = h5
+
                 assert (
-                    val is not None
+                    attr in keys_to_assert
                 ), f"Attribute '{attr}' marked as non-optional, but value is not present!"
-            elif utils.is_optional_primitive(T):
+
+            if utils.is_primitive(T_non_opt):
                 val = h5.attrs.get(attr)
-            elif utils.is_pydantic_model(T):
-                val = T.parse_raw(h5.attrs.get(attr))
+            elif utils.is_pydantic_model(T_non_opt):
+                if raw_val := h5.attrs.get(attr):
+                    val = T_non_opt.parse_raw(raw_val)
             else:
-                serialised = h5[attr]
+                serialised = h5.get(attr)
+                # we already asserted that non-optional fields require a value, so it's fine here
+                if serialised is None:
+                    return None
+
                 if isinstance(serialised, h5py.Dataset):
                     val = np.array(serialised)
                 elif isinstance(serialised, h5py.Group):
-                    assert is_hdf5_dataclass(T) or _is_supported_dict(T)
-                    if is_hdf5_dataclass(T):
-                        val = T.from_hdf5(serialised)
+                    assert is_hdf5_dataclass(T_non_opt) or _is_supported_dict(T_non_opt)
+                    if is_hdf5_dataclass(T_non_opt):
+                        val = T_non_opt.from_hdf5(serialised)
                     else:
                         # dict case
-                        _, V = get_args(T)
+                        _, V = get_args(T_non_opt)
                         val = {}
                         keys = (
                             serialised.attrs.keys()
