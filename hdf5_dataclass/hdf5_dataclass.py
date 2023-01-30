@@ -131,8 +131,6 @@ class HDF5Dataclass:
         """
 
         def deserialise_single(attr: str, T: type, h5: h5py.File | h5py.Group) -> Any:
-            val = None
-
             T_non_opt = (
                 utils.extract_type_from_optional(T) if utils.is_optional(T) else T
             )
@@ -149,36 +147,37 @@ class HDF5Dataclass:
                 ), f"Attribute '{attr}' marked as non-optional, but value is not present!"
 
             if utils.is_primitive(T_non_opt):
-                val = h5.attrs.get(attr)
+                return h5.attrs.get(attr)
             elif utils.is_pydantic_model(T_non_opt):
                 if raw_val := h5.attrs.get(attr):
-                    val = T_non_opt.parse_raw(raw_val)
+                    return T_non_opt.parse_raw(raw_val)
+                else:
+                    return None
             else:
                 serialised = h5.get(attr)
                 # we already asserted that non-optional fields require a value, so it's fine here
                 if serialised is None:
                     return None
-
-                if isinstance(serialised, h5py.Dataset):
-                    val = np.array(serialised)
+                elif isinstance(serialised, h5py.Dataset):
+                    return np.array(serialised)
                 elif isinstance(serialised, h5py.Group):
                     assert is_hdf5_dataclass(T_non_opt) or _is_supported_dict(T_non_opt)
                     if is_hdf5_dataclass(T_non_opt):
-                        val = T_non_opt.from_hdf5(serialised)
+                        return T_non_opt.from_hdf5(serialised)
                     else:
                         # dict case
                         _, V = get_args(T_non_opt)
-                        val = {}
+
                         keys = (
                             serialised.attrs.keys()
                             if utils.is_primitive(V) or utils.is_optional_primitive(V)
                             else serialised.keys()
                         )
-                        for key in keys:
-                            val[key] = deserialise_single(key, V, serialised)
+                        return {
+                            key: deserialise_single(key, V, serialised) for key in keys
+                        }
                 else:
                     raise Exception("Unknown type of data in hdf5")
-            return val
 
         h5 = (
             input
